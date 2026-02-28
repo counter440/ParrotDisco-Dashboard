@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disco GCS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+    --bg: #0a0e14; --bg2: #111820; --bg3: #1a2230;
+    --fg: #d0d8e0; --fg2: #8090a0; --accent: #00cc88;
+    --warn: #ffaa00; --danger: #ff3355; --blue: #3399ff;
+    --border: #2a3545; --font: 'Consolas', 'Menlo', monospace;
+}
+body { font-family: var(--font); background: var(--bg); color: var(--fg); overflow: hidden; height: 100vh; }
+
+/* ── Layout ───────────────────────────────────────────── */
+.app { display: grid; grid-template-rows: 40px 1fr 32px; height: 100vh; }
+
+.topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: var(--bg2); border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 14px; letter-spacing: 2px; color: var(--accent); }
+.topbar .status { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+.topbar .dot.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.topbar .dot.warn { background: var(--warn); }
+.topbar button {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
+    padding: 4px 12px; cursor: pointer; font-family: var(--font); font-size: 11px;
+    border-radius: 3px;
+}
+.topbar button:hover { border-color: var(--accent); color: var(--accent); }
+
+.main { display: grid; grid-template-columns: 1fr 320px; overflow: hidden; }
+
+/* ── Video Panel ─────────────────────────────────────── */
+.video-panel {
+    display: flex; flex-direction: column; background: #000;
+    border-right: 1px solid var(--border);
+}
+.video-container {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+}
+.video-container img {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+}
+.video-placeholder {
+    color: var(--fg2); font-size: 14px; text-align: center;
+}
+.video-overlay {
+    position: absolute; top: 8px; left: 12px; font-size: 11px; color: #fff8;
+}
+
+/* ── Controller Bar (below video) ────────────────────── */
+.controller-bar {
+    padding: 8px 12px; background: var(--bg2); border-top: 1px solid var(--border);
+    font-size: 11px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+    border-right: 1px solid var(--border);
+}
+.controller-bar .label { color: var(--fg2); }
+.controller-bar .val { color: var(--accent); margin-left: 4px; }
+.stick-display { display: flex; gap: 12px; }
+.stick-box {
+    width: 48px; height: 48px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; position: relative;
+}
+.stick-dot {
+    width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    transition: all 0.05s;
+}
+.btn-indicators { display: flex; gap: 4px; }
+.btn-ind {
+    width: 20px; height: 20px; border-radius: 3px; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--fg2); background: var(--bg);
+}
+.btn-ind.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+/* ── Telemetry Panel ─────────────────────────────────── */
+.telemetry-panel {
+    display: flex; flex-direction: column; overflow-y: auto;
+    background: var(--bg2); padding: 0;
+}
+.telem-section {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.telem-section h2 {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--fg2); margin-bottom: 8px;
+}
+.telem-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 2px 0; font-size: 12px;
+}
+.telem-row .key { color: var(--fg2); }
+.telem-row .value { color: var(--fg); font-weight: bold; }
+.telem-row .value.good { color: var(--accent); }
+.telem-row .value.warn { color: var(--warn); }
+.telem-row .value.danger { color: var(--danger); }
+
+/* Battery bar */
+.battery-bar-outer {
+    width: 100%; height: 14px; background: var(--bg); border-radius: 3px;
+    overflow: hidden; margin-top: 4px; border: 1px solid var(--border);
+}
+.battery-bar-inner {
+    height: 100%; background: var(--accent); transition: width 0.5s, background 0.5s;
+    border-radius: 2px;
+}
+
+/* Servo bars */
+.servo-bar-container { width: 100%; margin-top: 2px; }
+.servo-bar-outer {
+    width: 100%; height: 8px; background: var(--bg); border-radius: 2px;
+    overflow: hidden; position: relative; border: 1px solid var(--border);
+}
+.servo-bar-center {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--fg2);
+}
+.servo-bar-inner {
+    height: 100%; background: var(--blue); transition: width 0.1s;
+    border-radius: 1px;
+}
+
+/* Attitude indicator */
+.attitude-box {
+    width: 80px; height: 80px; border-radius: 50%; border: 2px solid var(--border);
+    background: var(--bg); position: relative; overflow: hidden; margin: 4px auto;
+}
+.attitude-horizon {
+    position: absolute; width: 200%; height: 200%; left: -50%;
+    background: linear-gradient(to bottom, #224488 50%, #886633 50%);
+    transform-origin: center center;
+}
+.attitude-crosshair {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 30px; height: 2px; background: var(--accent);
+}
+.attitude-crosshair::after {
+    content: ''; position: absolute; width: 2px; height: 30px;
+    background: var(--accent); top: -14px; left: 14px;
+}
+
+/* ── Flight Controls ─────────────────────────────────── */
+.flight-controls {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;
+}
+.flight-btn {
+    flex: 1; min-width: 60px; padding: 6px 4px; font-family: var(--font);
+    font-size: 10px; border: 1px solid var(--border); border-radius: 3px;
+    cursor: pointer; text-align: center; background: var(--bg); color: var(--fg);
+}
+.flight-btn:hover { border-color: var(--accent); }
+.flight-btn.takeoff { border-color: var(--accent); color: var(--accent); }
+.flight-btn.land { border-color: var(--blue); color: var(--blue); }
+.flight-btn.rth { border-color: var(--warn); color: var(--warn); }
+.flight-btn.emergency { border-color: var(--danger); color: var(--danger); }
+
+/* ── Log Bar ─────────────────────────────────────────── */
+.logbar {
+    display: flex; align-items: center; padding: 0 12px; gap: 6px;
+    background: var(--bg2); border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--fg2); overflow: hidden;
+}
+.logbar .log-label { color: var(--accent); white-space: nowrap; }
+.logbar .log-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+/* ── Config Modal ────────────────────────────────────── */
+.modal-backdrop {
+    display: none; position: fixed; inset: 0; background: #000a; z-index: 100;
+    align-items: center; justify-content: center;
+}
+.modal-backdrop.active { display: flex; }
+.modal {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 20px; min-width: 400px; max-width: 600px; max-height: 80vh; overflow-y: auto;
+}
+.modal h2 { font-size: 14px; color: var(--accent); margin-bottom: 12px; }
+.modal label { display: block; font-size: 11px; color: var(--fg2); margin-top: 8px; }
+.modal select, .modal input {
+    width: 100%; padding: 4px 8px; background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg); font-family: var(--font); font-size: 12px; margin-top: 2px;
+    border-radius: 3px;
+}
+.modal .row { display: flex; gap: 12px; }
+.modal .row > * { flex: 1; }
+.modal button {
+    margin-top: 14px; padding: 6px 16px; background: var(--accent); color: var(--bg);
+    border: none; cursor: pointer; font-family: var(--font); font-size: 12px; border-radius: 3px;
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+<!-- ── Top Bar ──────────────────────────────────────── -->
+<div class="topbar">
+    <h1>DISCO GCS</h1>
+    <div class="status">
+        <span id="flyingStateBadge" style="font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid var(--border);">DISCONNECTED</span>
+        <div class="dot" id="connDot"></div>
+        <span id="connLabel" style="font-size:11px;">Disconnected</span>
+        <button id="btnConnect">Connect</button>
+        <button id="btnConfig">Config</button>
+    </div>
+</div>
+
+<!-- ── Main Area ───────────────────────────────────── -->
+<div class="main">
+    <!-- Left: Video + Controller -->
+    <div style="display:flex; flex-direction:column;">
+        <div class="video-panel" style="flex:1;">
+            <div class="video-container">
+                <img id="videoFeed" style="display:none;" alt="Video Feed">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    No video<br><span style="font-size:11px;color:#556;">Connect to Disco to start stream</span>
+                </div>
+                <div class="video-overlay">
+                    <span id="videoFps">--</span> fps &nbsp;|&nbsp;
+                    <span id="videoRes">--</span>
+                </div>
+            </div>
+        </div>
+        <div class="controller-bar">
+            <div>
+                <span class="label">CONTROLLER:</span>
+                <span class="val" id="gpName">None</span>
+            </div>
+            <div class="stick-display">
+                <div>
+                    <div style="font-size:9px;color:var(--fg2);text-align:center;">L</div>
+                    <div class="stick-box"><div class="stick-dot" id="stickL"></div></div>
+                </div>
+                <div>
+                    <div style="font-size:9px;color:var(--fg2);text-align:center;">R</div>
+                    <div class="stick-box"><div class="stick-dot" id="stickR"></div></div>
+                </div>
+            </div>
+            <div>
+                <span class="label">Roll:</span><span class="val" id="valRoll">0</span>
+                <span class="label" style="margin-left:8px;">Pitch:</span><span class="val" id="valPitch">0</span>
+                <span class="label" style="margin-left:8px;">Yaw:</span><span class="val" id="valYaw">0</span>
+                <span class="label" style="margin-left:8px;">Gaz:</span><span class="val" id="valGaz">0</span>
+            </div>
+            <div class="btn-indicators">
+                <div class="btn-ind" id="indA">A</div>
+                <div class="btn-ind" id="indB">B</div>
+                <div class="btn-ind" id="indY">Y</div>
+                <div class="btn-ind" id="indX">X</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Telemetry -->
+    <div class="telemetry-panel">
+        <div class="telem-section">
+            <h2>Flight State</h2>
+            <div class="telem-row">
+                <span class="key">State</span>
+                <span class="value" id="tmState">--</span>
+            </div>
+            <div class="flight-controls">
+                <button class="flight-btn takeoff" id="btnTakeoff">TAKEOFF</button>
+                <button class="flight-btn land" id="btnLand">LAND</button>
+                <button class="flight-btn rth" id="btnRTH">RTH</button>
+                <button class="flight-btn emergency" id="btnEmergency">EMRG</button>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>Battery</h2>
+            <div class="telem-row">
+                <span class="key">Level</span>
+                <span class="value" id="tmBattery">--%</span>
+            </div>
+            <div class="battery-bar-outer">
+                <div class="battery-bar-inner" id="batteryBar" style="width:0%"></div>
+            </div>
+            <div class="telem-row" style="margin-top:4px;">
+                <span class="key">Voltage</span>
+                <span class="value" id="tmVoltage">--V</span>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>GPS</h2>
+            <div class="telem-row">
+                <span class="key">Position</span>
+                <span class="value" id="tmGps">--, --</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Satellites</span>
+                <span class="value" id="tmSats">--</span>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>Flight Data</h2>
+            <div class="telem-row">
+                <span class="key">Altitude</span>
+                <span class="value" id="tmAlt">-- m</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Airspeed</span>
+                <span class="value" id="tmAirspeed">-- m/s</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Groundspeed</span>
+                <span class="value" id="tmGndspeed">-- m/s</span>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>Attitude</h2>
+            <div class="attitude-box">
+                <div class="attitude-horizon" id="attHorizon"></div>
+                <div class="attitude-crosshair"></div>
+            </div>
+            <div class="telem-row">
+                <span class="key">Roll</span>
+                <span class="value" id="tmRoll">--</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Pitch</span>
+                <span class="value" id="tmPitch">--</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Heading</span>
+                <span class="value" id="tmYaw">--</span>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>Servo</h2>
+            <div class="telem-row">
+                <span class="key">Left</span>
+                <span class="value" id="tmServoL">-- us</span>
+            </div>
+            <div class="servo-bar-container">
+                <div class="servo-bar-outer">
+                    <div class="servo-bar-center"></div>
+                    <div class="servo-bar-inner" id="servoBarL" style="width:50%"></div>
+                </div>
+            </div>
+            <div class="telem-row" style="margin-top:4px;">
+                <span class="key">Right</span>
+                <span class="value" id="tmServoR">-- us</span>
+            </div>
+            <div class="servo-bar-container">
+                <div class="servo-bar-outer">
+                    <div class="servo-bar-center"></div>
+                    <div class="servo-bar-inner" id="servoBarR" style="width:50%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="telem-section">
+            <h2>System</h2>
+            <div class="telem-row">
+                <span class="key">Gyro Temp</span>
+                <span class="value" id="tmGyro">--</span>
+            </div>
+            <div class="telem-row">
+                <span class="key">Camera Tilt</span>
+                <span class="value" id="tmCamTilt">--</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Log Bar ─────────────────────────────────────── -->
+<div class="logbar">
+    <span class="log-label">LOG</span>
+    <span class="log-text" id="logText">Ready</span>
+</div>
+
+</div>
+
+<!-- ── Config Modal ────────────────────────────────── -->
+<div class="modal-backdrop" id="configModal">
+<div class="modal">
+    <h2>Controller Configuration</h2>
+    <label>Deadzone (%)</label>
+    <input type="range" id="cfgDeadzone" min="0" max="40" value="15">
+    <span id="cfgDeadzoneVal">15%</span>
+
+    <label style="margin-top:12px;">Axis Mapping</label>
+    <div class="row">
+        <div>
+            <label>Roll</label>
+            <select id="cfgRoll"><option value="0">Left Stick X (0)</option><option value="2">Right Stick X (2)</option></select>
+        </div>
+        <div>
+            <label>Pitch</label>
+            <select id="cfgPitch"><option value="1">Left Stick Y (1)</option><option value="3">Right Stick Y (3)</option></select>
+        </div>
+    </div>
+    <div class="row">
+        <div>
+            <label>Yaw</label>
+            <select id="cfgYaw"><option value="2">Right Stick X (2)</option><option value="0">Left Stick X (0)</option></select>
+        </div>
+        <div>
+            <label>Throttle (+)</label>
+            <select id="cfgThrottle"><option value="rt">Right Trigger</option><option value="3">Right Stick Y (3)</option></select>
+        </div>
+    </div>
+
+    <label style="margin-top:12px;">Button Mapping</label>
+    <div class="row">
+        <div><label>Takeoff</label><select id="cfgBtnTakeoff"><option value="0">A (0)</option><option value="1">B (1)</option><option value="2">X (2)</option><option value="3">Y (3)</option></select></div>
+        <div><label>Land</label><select id="cfgBtnLand"><option value="1" selected>B (1)</option><option value="0">A (0)</option><option value="2">X (2)</option><option value="3">Y (3)</option></select></div>
+    </div>
+    <div class="row">
+        <div><label>RTH</label><select id="cfgBtnRTH"><option value="3" selected>Y (3)</option><option value="0">A (0)</option><option value="1">B (1)</option><option value="2">X (2)</option></select></div>
+        <div><label>Emergency</label><select id="cfgBtnEmergency"><option value="9" selected>Start (9)</option><option value="8">Back (8)</option></select></div>
+    </div>
+
+    <button id="cfgClose">Close</button>
+</div>
+</div>
+
+<script>
+// ── Configuration ──────────────────────────────────────
+const WS_URL = `ws://${location.hostname || 'localhost'}:8765`;
+const VIDEO_WS_URL = `ws://${location.hostname || 'localhost'}:8765/video`;
+const SEND_HZ = 25;
+
+let config = {
+    deadzone: 0.15,
+    axisRoll: 0,
+    axisPitch: 1,
+    axisYaw: 2,
+    throttleSrc: 'rt',  // 'rt' = right trigger, or axis index
+    btnTakeoff: 0,
+    btnLand: 1,
+    btnRTH: 3,
+    btnEmergency: 9,
+};
+
+// ── State ──────────────────────────────────────────────
+let ws = null;
+let videoWs = null;
+let connected = false;
+let gamepad = null;
+let cameraTilt = 0;
+let lastBtnState = {};
+let videoFrameCount = 0;
+let videoFpsTimer = 0;
+
+// ── DOM refs ───────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+// ── WebSocket ──────────────────────────────────────────
+function connectWS() {
+    if (ws && ws.readyState <= 1) return;
+
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+        addLog('WebSocket connected');
+        ws.send(JSON.stringify({ type: 'connect' }));
+    };
+    ws.onmessage = e => {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'telemetry') updateTelemetry(msg.data);
+            else if (msg.type === 'connectionStatus') {
+                connected = msg.connected;
+                updateConnectionUI();
+                if (connected) {
+                    addLog('Connected to Disco');
+                    connectVideoWS();
+                }
+            }
+            else if (msg.type === 'log') {
+                if (msg.messages) msg.messages.forEach(m => addLog(m));
+            }
+        } catch {}
+    };
+    ws.onclose = () => {
+        addLog('WebSocket disconnected');
+        connected = false;
+        updateConnectionUI();
+        setTimeout(connectWS, 3000);
+    };
+    ws.onerror = () => {};
+}
+
+function connectVideoWS() {
+    if (videoWs && videoWs.readyState <= 1) return;
+    videoWs = new WebSocket(VIDEO_WS_URL);
+    videoWs.binaryType = 'arraybuffer';
+    videoWs.onmessage = e => {
+        const blob = new Blob([e.data], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        const img = $('videoFeed');
+        const old = img.src;
+        img.src = url;
+        img.style.display = 'block';
+        $('videoPlaceholder').style.display = 'none';
+        if (old) URL.revokeObjectURL(old);
+        videoFrameCount++;
+    };
+    videoWs.onclose = () => {
+        setTimeout(() => { if (connected) connectVideoWS(); }, 2000);
+    };
+}
+
+function send(msg) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+}
+
+// ── Telemetry UI ───────────────────────────────────────
+function updateTelemetry(d) {
+    // Flying state
+    $('tmState').textContent = d.flyingState.toUpperCase();
+    const badge = $('flyingStateBadge');
+    badge.textContent = d.flyingState.toUpperCase();
+    badge.style.borderColor =
+        d.flyingState === 'flying' ? 'var(--accent)' :
+        d.flyingState === 'emergency' ? 'var(--danger)' :
+        d.flyingState === 'landed' ? 'var(--blue)' : 'var(--warn)';
+    badge.style.color = badge.style.borderColor;
+
+    // Battery
+    const bp = d.battery;
+    $('tmBattery').textContent = bp + '%';
+    $('tmBattery').className = 'value ' + (bp > 30 ? 'good' : bp > 15 ? 'warn' : 'danger');
+    $('batteryBar').style.width = bp + '%';
+    $('batteryBar').style.background = bp > 30 ? 'var(--accent)' : bp > 15 ? 'var(--warn)' : 'var(--danger)';
+
+    // Voltage
+    $('tmVoltage').textContent = d.voltage > 0 ? d.voltage.toFixed(1) + 'V' : '--';
+
+    // GPS
+    if (d.gps.lat !== 0 || d.gps.lon !== 0) {
+        $('tmGps').textContent = d.gps.lat.toFixed(6) + ', ' + d.gps.lon.toFixed(6);
+    }
+    $('tmSats').textContent = d.gpsSats + (d.gpsFixed ? ' (fix)' : '');
+    $('tmSats').className = 'value ' + (d.gpsSats >= 6 ? 'good' : d.gpsSats >= 3 ? 'warn' : 'danger');
+
+    // Flight data
+    $('tmAlt').textContent = d.altitude + ' m';
+    $('tmAirspeed').textContent = d.airspeed + ' m/s';
+    $('tmGndspeed').textContent = d.groundspeed + ' m/s';
+
+    // Attitude
+    $('tmRoll').textContent = d.attitude.roll.toFixed(1) + '\u00b0';
+    $('tmPitch').textContent = d.attitude.pitch.toFixed(1) + '\u00b0';
+    $('tmYaw').textContent = d.attitude.yaw.toFixed(1) + '\u00b0';
+    // Horizon indicator
+    const hz = $('attHorizon');
+    const roll = d.attitude.roll;
+    const pitch = d.attitude.pitch;
+    hz.style.transform = `rotate(${-roll}deg) translateY(${pitch * 0.8}px)`;
+
+    // Servo
+    $('tmServoL').textContent = d.servoLeft + ' \u00b5s';
+    $('tmServoR').textContent = d.servoRight + ' \u00b5s';
+    // Servo bars: map 1000-2000 to 0-100%
+    $('servoBarL').style.width = ((d.servoLeft - 1000) / 10) + '%';
+    $('servoBarR').style.width = ((d.servoRight - 1000) / 10) + '%';
+
+    // System
+    $('tmGyro').textContent = d.gyroTemp > 0 ? d.gyroTemp.toFixed(1) + '\u00b0C' : '--';
+    $('tmCamTilt').textContent = d.cameraTilt + '\u00b0';
+
+    // Connection
+    if (d.connected && !connected) {
+        connected = true;
+        updateConnectionUI();
+    }
+}
+
+function updateConnectionUI() {
+    $('connDot').className = 'dot' + (connected ? ' on' : '');
+    $('connLabel').textContent = connected ? 'Connected' : 'Disconnected';
+    $('btnConnect').textContent = connected ? 'Disconnect' : 'Connect';
+}
+
+function addLog(msg) {
+    $('logText').textContent = msg;
+}
+
+// ── Gamepad ────────────────────────────────────────────
+function applyDeadzone(val) {
+    const dz = config.deadzone;
+    if (Math.abs(val) < dz) return 0;
+    return (val - Math.sign(val) * dz) / (1 - dz);
+}
+
+function pollGamepad() {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let gp = null;
+    for (const g of gamepads) {
+        if (g && g.connected) { gp = g; break; }
+    }
+
+    if (!gp) {
+        if (gamepad) { gamepad = null; $('gpName').textContent = 'None'; }
+        return { flag: 0, roll: 0, pitch: 0, yaw: 0, gaz: 0 };
+    }
+
+    if (!gamepad || gamepad.index !== gp.index) {
+        gamepad = gp;
+        $('gpName').textContent = gp.id.substring(0, 30);
+        addLog('Gamepad: ' + gp.id.substring(0, 40));
+    }
+
+    // Axes
+    const rawRoll = gp.axes[config.axisRoll] || 0;
+    const rawPitch = gp.axes[config.axisPitch] || 0;
+    const rawYaw = gp.axes[config.axisYaw] || 0;
+
+    const roll = Math.round(applyDeadzone(rawRoll) * 100);
+    const pitch = Math.round(applyDeadzone(rawPitch) * 100);
+    const yaw = Math.round(applyDeadzone(rawYaw) * 100);
+
+    // Throttle: triggers or axis
+    let gaz = 0;
+    if (config.throttleSrc === 'rt') {
+        // Right trigger = forward throttle (axis 5 or button 7 value)
+        // Left trigger = reverse (axis 4 or button 6 value)
+        // Triggers: some browsers expose as buttons (6, 7), some as axes
+        const rt = gp.buttons[7] ? gp.buttons[7].value : 0;
+        const lt = gp.buttons[6] ? gp.buttons[6].value : 0;
+        gaz = Math.round((rt - lt) * 100);
+    } else {
+        const axIdx = parseInt(config.throttleSrc);
+        gaz = Math.round(applyDeadzone(gp.axes[axIdx] || 0) * -100);
+    }
+
+    const flag = (roll !== 0 || pitch !== 0 || yaw !== 0 || gaz !== 0) ? 1 : 0;
+
+    // Buttons (edge detection)
+    function btnPressed(idx) {
+        const cur = gp.buttons[idx] ? gp.buttons[idx].pressed : false;
+        const prev = lastBtnState[idx] || false;
+        lastBtnState[idx] = cur;
+        return cur && !prev;
+    }
+
+    if (btnPressed(config.btnTakeoff)) send({ type: 'takeoff' });
+    if (btnPressed(config.btnLand)) send({ type: 'land' });
+    if (btnPressed(config.btnRTH)) send({ type: 'rth', start: true });
+    if (btnPressed(config.btnEmergency)) send({ type: 'emergency' });
+
+    // D-pad for camera tilt
+    const dpadUp = gp.buttons[12] ? gp.buttons[12].pressed : false;
+    const dpadDown = gp.buttons[13] ? gp.buttons[13].pressed : false;
+    if (dpadUp) cameraTilt = Math.min(cameraTilt + 2, 80);
+    if (dpadDown) cameraTilt = Math.max(cameraTilt - 2, -80);
+    if (dpadUp || dpadDown) send({ type: 'camera', tilt: cameraTilt, pan: 0 });
+
+    // Update UI
+    updateStickDot('stickL', rawRoll, gp.axes[config.axisPitch] || 0);
+    updateStickDot('stickR', gp.axes[config.axisYaw] || 0, 0);
+    $('valRoll').textContent = roll;
+    $('valPitch').textContent = pitch;
+    $('valYaw').textContent = yaw;
+    $('valGaz').textContent = gaz;
+
+    // Button indicators
+    $('indA').className = 'btn-ind' + (gp.buttons[0] && gp.buttons[0].pressed ? ' active' : '');
+    $('indB').className = 'btn-ind' + (gp.buttons[1] && gp.buttons[1].pressed ? ' active' : '');
+    $('indX').className = 'btn-ind' + (gp.buttons[2] && gp.buttons[2].pressed ? ' active' : '');
+    $('indY').className = 'btn-ind' + (gp.buttons[3] && gp.buttons[3].pressed ? ' active' : '');
+
+    return { flag, roll, pitch, yaw, gaz };
+}
+
+function updateStickDot(id, x, y) {
+    const dot = $(id);
+    const px = 50 + x * 40;
+    const py = 50 + y * 40;
+    dot.style.left = px + '%';
+    dot.style.top = py + '%';
+}
+
+// ── Main Loop ──────────────────────────────────────────
+let lastSendTime = 0;
+function mainLoop() {
+    const now = performance.now();
+    const cmd = pollGamepad();
+
+    if (now - lastSendTime >= 1000 / SEND_HZ) {
+        send({ type: 'pcmd', ...cmd });
+        lastSendTime = now;
+    }
+
+    requestAnimationFrame(mainLoop);
+}
+
+// Video FPS counter
+setInterval(() => {
+    $('videoFps').textContent = videoFrameCount;
+    videoFrameCount = 0;
+}, 1000);
+
+// ── Button Handlers ────────────────────────────────────
+$('btnConnect').addEventListener('click', () => {
+    if (connected) {
+        send({ type: 'disconnect' });
+        connected = false;
+        updateConnectionUI();
+    } else {
+        connectWS();
+    }
+});
+
+$('btnTakeoff').addEventListener('click', () => send({ type: 'takeoff' }));
+$('btnLand').addEventListener('click', () => send({ type: 'land' }));
+$('btnRTH').addEventListener('click', () => send({ type: 'rth', start: true }));
+$('btnEmergency').addEventListener('click', () => {
+    if (confirm('Send EMERGENCY stop?')) send({ type: 'emergency' });
+});
+
+// ── Config Modal ───────────────────────────────────────
+$('btnConfig').addEventListener('click', () => {
+    $('configModal').classList.add('active');
+});
+$('cfgClose').addEventListener('click', () => {
+    // Read config values
+    config.deadzone = parseInt($('cfgDeadzone').value) / 100;
+    config.axisRoll = parseInt($('cfgRoll').value);
+    config.axisPitch = parseInt($('cfgPitch').value);
+    config.axisYaw = parseInt($('cfgYaw').value);
+    config.throttleSrc = $('cfgThrottle').value;
+    config.btnTakeoff = parseInt($('cfgBtnTakeoff').value);
+    config.btnLand = parseInt($('cfgBtnLand').value);
+    config.btnRTH = parseInt($('cfgBtnRTH').value);
+    config.btnEmergency = parseInt($('cfgBtnEmergency').value);
+    $('configModal').classList.remove('active');
+    addLog('Config updated: deadzone=' + Math.round(config.deadzone * 100) + '%');
+});
+$('cfgDeadzone').addEventListener('input', e => {
+    $('cfgDeadzoneVal').textContent = e.target.value + '%';
+});
+
+// ── Keyboard shortcuts (backup) ────────────────────────
+document.addEventListener('keydown', e => {
+    if (e.key === 't' && e.ctrlKey) { e.preventDefault(); send({ type: 'takeoff' }); }
+    if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); send({ type: 'land' }); }
+    if (e.key === 'h' && e.ctrlKey) { e.preventDefault(); send({ type: 'rth', start: true }); }
+    if (e.key === 'Escape') send({ type: 'emergency' });
+});
+
+// ── Gamepad connection events ──────────────────────────
+window.addEventListener('gamepadconnected', e => {
+    addLog('Gamepad connected: ' + e.gamepad.id.substring(0, 40));
+});
+window.addEventListener('gamepaddisconnected', e => {
+    addLog('Gamepad disconnected');
+    gamepad = null;
+    $('gpName').textContent = 'None';
+});
+
+// ── Start ──────────────────────────────────────────────
+connectWS();
+requestAnimationFrame(mainLoop);
+</script>
+</body>
+</html>
