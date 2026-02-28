@@ -1,0 +1,85 @@
+export interface TelemetryData {
+  battery: number;
+  flyingState: string;
+  gps: { lat: number; lon: number; alt: number };
+  gpsSats: number;
+  gpsFixed: boolean;
+  altitude: number;
+  airspeed: number;
+  groundspeed: number;
+  speedX: number;
+  speedY: number;
+  speedZ: number;
+  attitude: { roll: number; pitch: number; yaw: number };
+  cameraTilt: number;
+  cameraPan: number;
+  voltage: number;
+  gyroTemp: number;
+  servoLeft: number;
+  servoRight: number;
+  pitotRaw: number;
+  connected: boolean;
+}
+
+export interface GamepadConfig {
+  deadzone: number;
+  axisRoll: number;
+  axisPitch: number;
+  axisYaw: number;
+  throttleSrc: string; // "rt" or axis index as string
+  btnTakeoff: number;
+  btnLand: number;
+  btnRTH: number;
+  btnEmergency: number;
+}
+
+export interface PcmdValues {
+  flag: number;
+  roll: number;
+  pitch: number;
+  yaw: number;
+  gaz: number;
+}
+
+export interface GamepadState {
+  name: string;
+  connected: boolean;
+  pcmd: PcmdValues;
+  rawAxes: number[];
+  buttons: boolean[];
+}
+
+export const DEFAULT_CONFIG: GamepadConfig = {
+  deadzone: 0.15,
+  axisRoll: 0,
+  axisPitch: 1,
+  axisYaw: 2,
+  throttleSrc: "rt",
+  btnTakeoff: 0,
+  btnLand: 1,
+  btnRTH: 3,
+  btnEmergency: 9,
+};
+
+export const EMPTY_TELEMETRY: TelemetryData = {
+  battery: 0,
+  flyingState: "disconnected",
+  gps: { lat: 0, lon: 0, alt: 0 },
+  gpsSats: 0,
+  gpsFixed: false,
+  altitude: 0,
+  airspeed: 0,
+  groundspeed: 0,
+  speedX: 0,
+  speedY: 0,
+  speedZ: 0,
+  attitude: { roll: 0, pitch: 0, yaw: 0 },
+  cameraTilt: 0,
+  cameraPan: 0,
+  voltage: 0,
+  gyroTemp: 0,
+  servoLeft: 1500,
+  servoRight: 1500,
+  pitotRaw: 0,
+  connected: false,
+};
