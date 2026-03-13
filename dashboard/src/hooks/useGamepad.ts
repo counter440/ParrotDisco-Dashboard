@@ -20,6 +20,8 @@ export function useGamepad(
 
   const lastBtnStateRef = useRef<Record<number, boolean>>({});
   const cameraTiltRef = useRef(0);
+  const cameraPanRef = useRef(0);
+  const cameraSendRef = useRef(0);
   const configRef = useRef(config);
   const sendRef = useRef(send);
   const lastSendTimeRef = useRef(0);
@@ -90,16 +92,22 @@ export function useGamepad(
     if (btnPressed(cfg.btnRTH)) sendFn({ type: "rth", start: true });
     if (btnPressed(cfg.btnEmergency)) sendFn({ type: "emergency" });
 
-    // D-pad camera tilt
+    // D-pad camera tilt (throttled to ~5Hz)
     const dpadUp = gp.buttons[12]?.pressed ?? false;
     const dpadDown = gp.buttons[13]?.pressed ?? false;
-    if (dpadUp) cameraTiltRef.current = Math.min(cameraTiltRef.current + 2, 80);
-    if (dpadDown) cameraTiltRef.current = Math.max(cameraTiltRef.current - 2, -80);
-    if (dpadUp || dpadDown)
-      sendFn({ type: "camera", tilt: cameraTiltRef.current, pan: 0 });
+    const dpadLeft = gp.buttons[14]?.pressed ?? false;
+    const dpadRight = gp.buttons[15]?.pressed ?? false;
+    const now = performance.now();
+    if ((dpadUp || dpadDown || dpadLeft || dpadRight) && now - (cameraSendRef.current ?? 0) >= 200) {
+      if (dpadUp) cameraTiltRef.current = Math.min(cameraTiltRef.current + 5, 80);
+      if (dpadDown) cameraTiltRef.current = Math.max(cameraTiltRef.current - 5, -80);
+      if (dpadRight) cameraPanRef.current = Math.min(cameraPanRef.current + 5, 80);
+      if (dpadLeft) cameraPanRef.current = Math.max(cameraPanRef.current - 5, -80);
+      sendFn({ type: "camera", tilt: cameraTiltRef.current, pan: cameraPanRef.current });
+      cameraSendRef.current = now;
+    }
 
     // Send PCMD at 25Hz
-    const now = performance.now();
     if (now - lastSendTimeRef.current >= 40) {
       sendFn({ type: "pcmd", ...pcmd });
       lastSendTimeRef.current = now;

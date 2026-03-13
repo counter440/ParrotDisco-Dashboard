@@ -18,6 +18,10 @@ export interface TelemetryData {
   servoLeft: number;
   servoRight: number;
   pitotRaw: number;
+  rssi: string;
+  rsrp: string;
+  rsrq: string;
+  sinr: string;
   connected: boolean;
 }
 
@@ -81,5 +85,18 @@ export const EMPTY_TELEMETRY: TelemetryData = {
   servoLeft: 1500,
   servoRight: 1500,
   pitotRaw: 0,
+  rssi: "",
+  rsrp: "",
+  rsrq: "",
+  sinr: "",
   connected: false,
 };
+
+export interface Waypoint {
+  id: string;
+  lat: number;
+  lon: number;
+  altitude: number;
+}
+
+export const DEFAULT_ALTITUDE = 50;

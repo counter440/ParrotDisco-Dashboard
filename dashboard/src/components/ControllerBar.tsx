@@ -52,18 +52,18 @@ export default function ControllerBar({ gpState, config }: ControllerBarProps) {
         <StickViz x={rightX} y={0} label="R" />
       </div>
 
-      <div className="flex gap-4 text-white/40">
+      <div className="flex gap-4 text-white/40 font-mono text-[12px]">
         <span>
-          Roll: <span className="text-cyan-400 font-semibold tabular-nums">{pcmd.roll}</span>
+          Roll <span className="text-cyan-400 font-semibold tabular-nums inline-block w-[36px] text-right">{pcmd.roll}</span>
         </span>
         <span>
-          Pitch: <span className="text-cyan-400 font-semibold tabular-nums">{pcmd.pitch}</span>
+          Pitch <span className="text-cyan-400 font-semibold tabular-nums inline-block w-[36px] text-right">{pcmd.pitch}</span>
         </span>
         <span>
-          Yaw: <span className="text-cyan-400 font-semibold tabular-nums">{pcmd.yaw}</span>
+          Yaw <span className="text-cyan-400 font-semibold tabular-nums inline-block w-[36px] text-right">{pcmd.yaw}</span>
         </span>
         <span>
-          Gaz: <span className="text-cyan-400 font-semibold tabular-nums">{pcmd.gaz}</span>
+          Gaz <span className="text-cyan-400 font-semibold tabular-nums inline-block w-[36px] text-right">{pcmd.gaz}</span>
         </span>
       </div>
 

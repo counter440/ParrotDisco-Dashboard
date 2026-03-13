@@ -9,11 +9,11 @@ import sys
 import time
 from pathlib import Path
 
-DISCO_IP = "192.168.42.1"
+DISCO_IP = "10.95.46.222"
 FTP_PORT = 21
 TELNET_PORT = 23
-REMOTE_DIR = "/data/ftp/internal_000"
-REMOTE_PATH = f"{REMOTE_DIR}/cockpit_agent.sh"
+REMOTE_DIR = "/internal_000"
+REMOTE_PATH = "/data/ftp/internal_000/cockpit_agent.sh"
 LOCAL_FILE = Path(__file__).parent / "cockpit_agent.sh"
 
 

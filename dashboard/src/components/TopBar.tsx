@@ -1,4 +1,4 @@
-import { Wifi, WifiOff, Settings } from "lucide-react";
+import { Wifi, WifiOff, Settings, Route } from "lucide-react";
 
 interface TopBarProps {
   connected: boolean;
@@ -6,6 +6,7 @@ interface TopBarProps {
   onConnect: () => void;
   onDisconnect: () => void;
   onOpenConfig: () => void;
+  onOpenFlightPlanner: () => void;
 }
 
 function stateColor(state: string): string {
@@ -30,6 +31,7 @@ export default function TopBar({
   onConnect,
   onDisconnect,
   onOpenConfig,
+  onOpenFlightPlanner,
 }: TopBarProps) {
   return (
     <div className="flex items-center justify-between px-5 h-14 bg-white/[0.04] backdrop-blur-xl border-b border-white/[0.08]">
@@ -61,6 +63,13 @@ export default function TopBar({
           className="px-4 py-1.5 bg-white/[0.06] border border-white/[0.08] rounded-xl text-white/70 hover:bg-white/[0.1] hover:text-white/90 transition-all duration-300 cursor-pointer"
         >
           {connected ? "Disconnect" : "Connect"}
+        </button>
+
+        <button
+          onClick={onOpenFlightPlanner}
+          className="p-2 bg-white/[0.06] border border-white/[0.08] rounded-xl text-white/50 hover:bg-white/[0.1] hover:text-white/90 transition-all duration-300 cursor-pointer"
+        >
+          <Route size={16} />
         </button>
 
         <button

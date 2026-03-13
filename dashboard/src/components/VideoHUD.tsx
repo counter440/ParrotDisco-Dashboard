@@ -36,8 +36,8 @@ function MiniAttitudeIndicator({ roll, pitch }: { roll: number; pitch: number })
 
   return (
     <svg
-      width="48"
-      height="48"
+      width="96"
+      height="96"
       viewBox="-44 -44 88 88"
       className="rounded-full"
       style={{ filter: "drop-shadow(0 0 6px rgba(6,182,212,0.3))" }}
@@ -64,6 +64,72 @@ function MiniAttitudeIndicator({ roll, pitch }: { roll: number; pitch: number })
   );
 }
 
+function rssiLevel(rssi: string): number {
+  const val = parseInt(rssi);
+  if (isNaN(val)) return 0;
+  if (val > -65) return 4;
+  if (val > -75) return 3;
+  if (val > -85) return 2;
+  if (val > -95) return 1;
+  return 0;
+}
+
+function rssiColor(rssi: string): string {
+  const level = rssiLevel(rssi);
+  if (level >= 3) return "text-emerald-400";
+  if (level >= 2) return "text-amber-400";
+  return "text-rose-500";
+}
+
+function SignalBars({ rssi }: { rssi: string }) {
+  const level = rssiLevel(rssi);
+  const color = level >= 3 ? "#34d399" : level >= 2 ? "#fbbf24" : "#f43f5e";
+  const inactiveColor = "rgba(255,255,255,0.15)";
+
+  return (
+    <svg width="36" height="24" viewBox="0 0 20 16">
+      {[0, 1, 2, 3].map((i) => (
+        <rect
+          key={i}
+          x={i * 5}
+          y={12 - i * 3}
+          width="4"
+          height={4 + i * 3}
+          rx="0.5"
+          fill={i < level ? color : inactiveColor}
+        />
+      ))}
+    </svg>
+  );
+}
+
+function BatteryIcon({ pct }: { pct: number }) {
+  const color = pct > 30 ? "#34d399" : pct > 15 ? "#fbbf24" : "#f43f5e";
+  const fillWidth = Math.max(0, Math.min(16, (pct / 100) * 16));
+
+  return (
+    <svg width="36" height="20" viewBox="0 0 28 16">
+      <rect x="0" y="2" width="23" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="23" y="5" width="3" height="6" rx="1" fill="currentColor" opacity="0.5" />
+      <rect x="3" y="5" width={fillWidth} height="6" rx="1" fill={color} />
+    </svg>
+  );
+}
+
+function SatelliteIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 7L9 3L5 7l4 4" />
+      <path d="M17 11l4 4-4 4-4-4" />
+      <path d="m8 12 4 4" />
+      <path d="m12 8 4 4" />
+      <path d="m2 22 3-3" />
+      <path d="M7 17a5 5 0 0 0 0-7" />
+      <path d="M11 21a9 9 0 0 0 0-13" />
+    </svg>
+  );
+}
+
 const textShadow = { textShadow: "0 1px 4px rgba(0,0,0,0.8)" };
 
 export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
@@ -75,23 +141,35 @@ export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
         <div className="flex items-center gap-2">
           <MiniAttitudeIndicator roll={t.attitude.roll} pitch={t.attitude.pitch} />
           <div
-            className="bg-black/40 backdrop-blur rounded-lg px-2 py-1 text-white/90 tabular-nums"
+            className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/90 tabular-nums text-[20px] font-semibold"
             style={textShadow}
           >
             {t.attitude.yaw.toFixed(0)}&deg;
           </div>
         </div>
 
-        {/* Top-right: Battery + altitude */}
-        <div className="flex flex-col items-end gap-1.5">
-          <div className={`bg-black/40 backdrop-blur rounded-lg px-2 py-1 tabular-nums font-semibold ${batteryColor(t.battery)}`}>
-            {t.battery}%
+        {/* Top-right: Signal + Battery + altitude */}
+        <div className="flex flex-col items-end gap-2">
+          <div className={`bg-black/40 backdrop-blur rounded-lg px-4 py-2 tabular-nums font-semibold text-[20px] flex items-center gap-2 ${rssiColor(t.rssi)}`}>
+            <SignalBars rssi={t.rssi} />
+            <span>{t.rssi || "--"}</span>
+          </div>
+          <div className={`bg-black/40 backdrop-blur rounded-lg px-4 py-2 tabular-nums font-semibold text-[20px] flex items-center gap-2 ${batteryColor(t.battery)}`}>
+            <BatteryIcon pct={t.battery} />
+            <span>{t.battery}%</span>
+          </div>
+          <div className={`bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-[20px] font-semibold tabular-nums flex items-center gap-2 ${satsColor(t.gpsSats)}`}>
+            <SatelliteIcon />
+            <span>{t.gpsSats} sats</span>
           </div>
           <div
-            className="bg-black/40 backdrop-blur rounded-lg px-2 py-1 text-white/90 tabular-nums"
+            className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/90 tabular-nums text-[20px] font-semibold"
             style={textShadow}
           >
             {t.altitude} m
+          </div>
+          <div className={`backdrop-blur rounded-lg px-4 py-2 text-[18px] uppercase font-semibold ${stateColor(t.flyingState)}`}>
+            {t.flyingState}
           </div>
         </div>
       </div>
@@ -101,28 +179,21 @@ export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
         {/* Bottom-left: Speeds */}
         <div className="flex flex-col gap-1.5">
           <div
-            className="bg-black/40 backdrop-blur rounded-lg px-2 py-1 text-white/90 tabular-nums"
+            className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/90 tabular-nums text-[20px] font-semibold"
             style={textShadow}
           >
             AS {t.airspeed} m/s
           </div>
           <div
-            className="bg-black/40 backdrop-blur rounded-lg px-2 py-1 text-white/90 tabular-nums"
+            className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/90 tabular-nums text-[20px] font-semibold"
             style={textShadow}
           >
             GS {t.groundspeed} m/s
           </div>
         </div>
 
-        {/* Bottom-right: Flying state + GPS */}
-        <div className="flex flex-col items-end gap-1.5">
-          <div className={`backdrop-blur rounded-lg px-2 py-1 text-[11px] uppercase font-semibold ${stateColor(t.flyingState)}`}>
-            {t.flyingState}
-          </div>
-          <div className={`bg-black/40 backdrop-blur rounded-lg px-2 py-1 tabular-nums ${satsColor(t.gpsSats)}`}>
-            {t.gpsSats} sats{t.gpsFixed ? " (fix)" : ""}
-          </div>
-        </div>
+        {/* Bottom-right: empty */}
+        <div />
       </div>
     </div>
   );

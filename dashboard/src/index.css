@@ -27,3 +27,8 @@ body {
   max-width: none !important;
   max-height: none !important;
 }
+
+@keyframes fillRight {
+  from { width: 0%; }
+  to { width: 100%; }
+}

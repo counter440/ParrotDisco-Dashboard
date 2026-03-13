@@ -28,7 +28,7 @@ log = logging.getLogger("disco_gcs")
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-DISCO_IP = "192.168.42.1"
+DISCO_IP = "10.95.46.222"
 DISCOVERY_PORT = 44444
 D2C_PORT = 43210            # our UDP port to receive data from drone
 ARSTREAM2_CLIENT_STREAM = 55004
@@ -36,8 +36,8 @@ ARSTREAM2_CLIENT_CONTROL = 55005
 PCMD_HZ = 25
 WS_PORT = 8765
 HTTP_PORT = 8080
-CHUCK_TELEMETRY_PORT = 8888  # cockpit_agent.sh port on drone
-FFMPEG_CMD = "ffmpeg"
+CHUCK_TELEMETRY_PORT = 8889  # cockpit_agent.sh port on drone
+FFMPEG_CMD = str(Path(__file__).parent / "ffmpeg.exe") if sys.platform == "win32" else "ffmpeg"
 
 # ── ARSDK3 Protocol Constants ─────────────────────────────────────────────────
 
@@ -100,6 +100,8 @@ class CommonClass(IntEnum):
     COMMON = 4
     COMMON_STATE = 5
     SETTINGS_STATE = 16
+    CALIBRATION = 13
+    CALIBRATION_STATE = 14
 
 # ── Frame Packing ─────────────────────────────────────────────────────────────
 
@@ -183,6 +185,33 @@ class ARSDKProtocol:
         cmd = self.pack_command(ARDRONE3_PROJECT, Ardrone3Class.PILOTING, PilotingCmd.FLAT_TRIM)
         return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, cmd)
 
+    def pack_magnetometer_calibration(self, calibrate: int) -> bytes:
+        """Start (1) or cancel (0) magnetometer calibration. Common.Calibration.MagnetoCalibration."""
+        cmd = self.pack_command(COMMON_PROJECT, CommonClass.CALIBRATION, 0, ('B', calibrate))
+        return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, cmd)
+
+    def pack_mavlink_start(self, filename: str, plan_type: int = 0) -> bytes:
+        """Pack common.Mavlink.Start (project=0, cls=11, cmd=0)."""
+        payload = struct.pack("<BBH", COMMON_PROJECT, 11, 0)
+        payload += filename.encode("utf-8") + b"\x00"
+        payload += struct.pack("<I", plan_type)
+        return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, payload)
+
+    def pack_mavlink_pause(self) -> bytes:
+        """Pack common.Mavlink.Pause (project=0, cls=11, cmd=1)."""
+        payload = struct.pack("<BBH", COMMON_PROJECT, 11, 1)
+        return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, payload)
+
+    def pack_mavlink_stop(self) -> bytes:
+        """Pack common.Mavlink.Stop (project=0, cls=11, cmd=2)."""
+        payload = struct.pack("<BBH", COMMON_PROJECT, 11, 2)
+        return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, payload)
+
+    def pack_pitot_calibration(self, calibrate: int) -> bytes:
+        """Start (1) or cancel (0) pitot calibration. ardrone3.PilotingSettings.PitotCalibration (cls=2, cmd=3)."""
+        cmd = self.pack_command(ARDRONE3_PROJECT, Ardrone3Class.PILOTING_SETTINGS, 3, ('B', calibrate))
+        return self.pack_frame(DataType.DATA_WITH_ACK, BufferID.C2D_ACK, cmd)
+
     @staticmethod
     def parse_frame(data: bytes):
         """Parse an incoming ARSDK3 frame. Returns (data_type, buffer_id, seq, payload) or None."""
@@ -230,6 +259,10 @@ class TelemetryState:
         self.servo_left = 1500
         self.servo_right = 1500
         self.pitot_raw = 0
+        self.rssi = ""
+        self.rsrp = ""
+        self.rsrq = ""
+        self.sinr = ""
         self.connected = False
         self.last_update = 0
 
@@ -265,6 +298,10 @@ class TelemetryState:
             "servoLeft": self.servo_left,
             "servoRight": self.servo_right,
             "pitotRaw": self.pitot_raw,
+            "rssi": self.rssi,
+            "rsrp": self.rsrp,
+            "rsrq": self.rsrq,
+            "sinr": self.sinr,
             "connected": self.connected,
         }
 
@@ -286,6 +323,10 @@ class DiscoConnection:
         self.pcmd_pitch = 0
         self.pcmd_yaw = 0
         self.pcmd_gaz = 0
+        # Test mode
+        self._test_mode = False
+        self._test_sock = None
+        self._test_motor_enabled = False
         self.ws_clients = set()
         self.video_clients = set()
         self.ffmpeg_proc = None
@@ -333,6 +374,8 @@ class DiscoConnection:
 
     async def connect(self) -> bool:
         """Full connection: discovery + UDP sockets + enable video."""
+        if self.connected:
+            return True
         if not await self.discover():
             return False
 
@@ -375,6 +418,50 @@ class DiscoConnection:
 
     async def send_flat_trim(self):
         self.send_cmd(self.protocol.pack_flat_trim())
+        self.add_log("FLAT TRIM sent — calibrating level reference")
+
+    async def send_magneto_calibration(self, start: bool):
+        self.send_cmd(self.protocol.pack_magnetometer_calibration(1 if start else 0))
+        self.add_log(f"Magnetometer calibration {'STARTED — rotate drone on all axes' if start else 'CANCELLED'}")
+
+    async def send_pitot_calibration(self, start: bool):
+        self.send_cmd(self.protocol.pack_pitot_calibration(1 if start else 0))
+        self.add_log(f"Pitot calibration {'STARTED — keep drone still, no wind' if start else 'CANCELLED'}")
+
+    # ── Flight Plans ─────────────────────────────────────────────────────────
+
+    async def upload_flightplan(self, filename: str, content: str) -> bool:
+        """Upload a Mavlink flight plan file to the drone via FTP."""
+        try:
+            ftp = __import__('ftplib').FTP()
+            ftp.connect(DISCO_IP, 21, timeout=5)
+            ftp.login()
+            try:
+                ftp.cwd("/internal_000/flightplans")
+            except Exception:
+                ftp.mkd("/internal_000/flightplans")
+                ftp.cwd("/internal_000/flightplans")
+            from io import BytesIO
+            ftp.storbinary(f"STOR {filename}", BytesIO(content.encode("utf-8")))
+            ftp.quit()
+            self.add_log(f"Flight plan '{filename}' uploaded")
+            return True
+        except Exception as e:
+            self.add_log(f"FTP upload failed: {e}")
+            return False
+
+    async def send_mavlink_start(self, filename: str):
+        remote_path = f"flightplans/{filename}"
+        self.send_cmd(self.protocol.pack_mavlink_start(remote_path))
+        self.add_log(f"MAVLINK START — {filename}")
+
+    async def send_mavlink_pause(self):
+        self.send_cmd(self.protocol.pack_mavlink_pause())
+        self.add_log("MAVLINK PAUSE")
+
+    async def send_mavlink_stop(self):
+        self.send_cmd(self.protocol.pack_mavlink_stop())
+        self.add_log("MAVLINK STOP")
 
     async def send_video_enable(self, enable: bool):
         self.send_cmd(self.protocol.pack_video_enable(1 if enable else 0))
@@ -490,6 +577,10 @@ class DiscoConnection:
                     self.telemetry.gps_lat = lat
                     self.telemetry.gps_lon = lon
                     self.telemetry.gps_alt = alt
+                    # Disco firmware doesn't always report sat count,
+                    # but if we're getting valid position, we have a fix
+                    if not self.telemetry.gps_fixed:
+                        self.telemetry.gps_fixed = True
 
             # SpeedChanged (cmd=5): speedX(f), speedY(f), speedZ(f)
             elif cmd == 5 and len(args) >= 12:
@@ -511,14 +602,26 @@ class DiscoConnection:
                 alt, = struct.unpack("<d", args[:8])
                 self.telemetry.altitude = alt
 
-            # GpsNumberOfSatelliteChanged (cmd=13): numberOfSatellite(u8) — actually in GPS settings state
-            elif cmd == 13 and len(args) >= 1:
-                self.telemetry.gps_sats = args[0]
-
             # AirSpeedChanged (cmd=12): airSpeed(f)
             elif cmd == 12 and len(args) >= 4:
                 speed, = struct.unpack("<f", args[:4])
                 self.telemetry.air_speed = speed
+
+        # GPSState (cls=24)
+        elif cls == 24:
+            # GpsFixStateChanged (cmd=2): fixed(u8) 0=unfixed 1=fixed
+            if cmd == 2 and len(args) >= 1:
+                self.telemetry.gps_fixed = args[0] == 1
+
+        # GPSSettingsState (cls=31)
+        elif cls == 31:
+            # GPSFixStateChanged (cmd=0): fixed(u8)
+            if cmd == 0 and len(args) >= 1:
+                self.telemetry.gps_fixed = args[0] == 1
+            # NumberOfSatelliteChanged (cmd=2)
+            elif cmd == 2 and len(args) >= 4:
+                sats = struct.unpack("<I", args[:4])[0]
+                self.telemetry.gps_sats = sats
 
         # CameraState (cls=25): Orientation (cmd=0)
         elif cls == 25:
@@ -537,6 +640,28 @@ class DiscoConnection:
             # SensorsStatesListChanged (cmd=8)
             # WifiSignalChanged (cmd=7)
 
+        # CalibrationState (cls=14)
+        elif cls == 14:
+            # MagnetoCalibrationStateChanged (cmd=0): xAxisCalibration(u8), yAxis(u8), zAxis(u8), calibrationFailed(u8)
+            if cmd == 0 and len(args) >= 4:
+                x, y, z, failed = args[0], args[1], args[2], args[3]
+                if failed:
+                    self.add_log("Magnetometer calibration FAILED")
+                else:
+                    axes = []
+                    if x: axes.append("X")
+                    if y: axes.append("Y")
+                    if z: axes.append("Z")
+                    done = "+".join(axes) if axes else "none"
+                    if x and y and z:
+                        self.add_log("Magnetometer calibration COMPLETE")
+                    else:
+                        self.add_log(f"Magneto calibration progress: {done} done")
+            # MagnetoCalibrationRequiredState (cmd=1)
+            elif cmd == 1 and len(args) >= 1:
+                if args[0]:
+                    self.add_log("Magnetometer calibration required")
+
     async def telemetry_broadcast_loop(self):
         """Broadcast telemetry to all WebSocket clients at 10Hz."""
         while self.connected:
@@ -554,20 +679,37 @@ class DiscoConnection:
     # ── Video Proxy ───────────────────────────────────────────────────────────
 
     async def start_video_proxy(self):
-        """Launch ffmpeg to receive RTP H.264 and output MJPEG frames."""
+        """Receive RTP on the advertised port, forward to a local port for ffmpeg."""
+        FFMPEG_RTP_PORT = 55104  # local port ffmpeg listens on
+
+        # Bind the port we told the drone about during discovery
+        self._rtp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._rtp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._rtp_sock.bind(("0.0.0.0", ARSTREAM2_CLIENT_STREAM))
+        self._rtp_sock.setblocking(False)
+        self.add_log(f"RTP listener bound on UDP :{ARSTREAM2_CLIENT_STREAM}")
+
+        # Forward socket to send complete RTP packets to ffmpeg's local port
+        self._rtp_fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._rtp_fwd_sock.setblocking(False)
+
+        # SDP pointing ffmpeg at our local forwarding port
         sdp_content = (
             "v=0\r\n"
-            f"c=IN IP4 {DISCO_IP}\r\n"
-            "m=video {port} RTP/AVP 96\r\n"
+            "o=- 0 0 IN IP4 127.0.0.1\r\n"
+            "s=Disco\r\n"
+            "c=IN IP4 127.0.0.1\r\n"
+            f"m=video {FFMPEG_RTP_PORT} RTP/AVP 96\r\n"
             "a=rtpmap:96 H264/90000\r\n"
-        ).format(port=ARSTREAM2_CLIENT_STREAM)
-
+        )
         sdp_path = Path(__file__).parent / "disco_stream.sdp"
         sdp_path.write_text(sdp_content)
 
         cmd = [
             FFMPEG_CMD,
             "-protocol_whitelist", "file,udp,rtp",
+            "-probesize", "32768",
+            "-analyzeduration", "500000",
             "-i", str(sdp_path),
             "-f", "mjpeg",
             "-q:v", "5",
@@ -580,14 +722,58 @@ class DiscoConnection:
             self.ffmpeg_proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
             self.add_log("ffmpeg video proxy started")
+            self._ffmpeg_rtp_port = FFMPEG_RTP_PORT
+            asyncio.create_task(self._ffmpeg_stderr_loop())
+            asyncio.create_task(self._rtp_forward_loop())
             await self.video_read_loop()
         except FileNotFoundError:
             self.add_log("ffmpeg not found — video disabled")
         except Exception as e:
             self.add_log(f"ffmpeg error: {e}")
+
+    async def _rtp_forward_loop(self):
+        """Receive RTP packets from drone and forward them intact to ffmpeg's local UDP port."""
+        loop = asyncio.get_event_loop()
+        pkt_count = 0
+        while self.ffmpeg_proc and self.ffmpeg_proc.returncode is None:
+            try:
+                data = await asyncio.wait_for(
+                    loop.sock_recv(self._rtp_sock, 65536),
+                    timeout=5.0
+                )
+                if len(data) > 12:
+                    # Forward the complete RTP packet to ffmpeg
+                    self._rtp_fwd_sock.sendto(data, ("127.0.0.1", self._ffmpeg_rtp_port))
+                    pkt_count += 1
+                    if pkt_count == 1:
+                        self.add_log("Receiving video RTP data from drone")
+                    if pkt_count == 100:
+                        self.add_log(f"Video: forwarded {pkt_count} RTP packets to ffmpeg")
+            except asyncio.TimeoutError:
+                continue
+            except OSError as e:
+                self.add_log(f"RTP forward error: {e}")
+                break
+
+    async def _ffmpeg_stderr_loop(self):
+        """Read ffmpeg stderr and log it."""
+        while self.ffmpeg_proc and self.ffmpeg_proc.returncode is None:
+            try:
+                line = await asyncio.wait_for(
+                    self.ffmpeg_proc.stderr.readline(), timeout=5.0
+                )
+                if not line:
+                    break
+                text = line.decode(errors="replace").strip()
+                if text:
+                    log.info(f"ffmpeg: {text}")
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                break
 
     async def video_read_loop(self):
         """Read MJPEG frames from ffmpeg stdout, broadcast to WebSocket clients."""
@@ -639,6 +825,10 @@ class DiscoConnection:
                 await asyncio.wait_for(self.ffmpeg_proc.wait(), timeout=3.0)
             except asyncio.TimeoutError:
                 self.ffmpeg_proc.kill()
+        if hasattr(self, '_rtp_sock') and self._rtp_sock:
+            self._rtp_sock.close()
+        if hasattr(self, '_rtp_fwd_sock') and self._rtp_fwd_sock:
+            self._rtp_fwd_sock.close()
 
     # ── CHUCK Extra Telemetry ─────────────────────────────────────────────────
 
@@ -665,18 +855,111 @@ class DiscoConnection:
                         elif key == "gyro_temp":
                             self.telemetry.gyro_temp = float(val)
                         elif key == "servo_left":
-                            self.telemetry.servo_left = int(val)
+                            raw = int(val)
+                            self.telemetry.servo_left = raw // 1000 if raw > 10000 else raw
                         elif key == "servo_right":
-                            self.telemetry.servo_right = int(val)
+                            raw = int(val)
+                            self.telemetry.servo_right = raw // 1000 if raw > 10000 else raw
                         elif key == "pitot_raw":
-                            self.telemetry.pitot_raw = int(val)
+                            self.telemetry.pitot_raw = int(val) if val else 0
+                        elif key == "rssi":
+                            self.telemetry.rssi = val
+                        elif key == "rsrp":
+                            self.telemetry.rsrp = val
+                        elif key == "rsrq":
+                            self.telemetry.rsrq = val
+                        elif key == "sinr":
+                            self.telemetry.sinr = val
+                        elif key == "gps_sats":
+                            sats = int(val) if val else 0
+                            if sats > 0:
+                                self.telemetry.gps_sats = sats
             except (OSError, asyncio.TimeoutError, ValueError):
                 pass
             await asyncio.sleep(0.5)
 
+    # ── Test Mode (Direct PWM via pwm_agent) ───────────────────────────────
+
+    PWM_AGENT_PORT = 8890
+    SERVO_MIN = 1000000   # 1000µs in ns
+    SERVO_MAX = 2000000   # 2000µs in ns
+    SERVO_NEUTRAL = 1500000
+    MOTOR_MAX_TEST = 18750  # ~15% of 125000ns period — safe bench test cap
+
+    async def _pwm_send(self, cmd: str):
+        """Send a command to the PWM agent on the drone."""
+        if not self._test_sock:
+            return
+        try:
+            self._test_sock.sendall((cmd + '\n').encode())
+        except OSError as e:
+            self.add_log(f"PWM agent error: {e}")
+
+    async def test_mode_enable(self):
+        """Connect to PWM agent and enable servos."""
+        if self._test_mode:
+            return
+        try:
+            self._test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._test_sock.settimeout(3)
+            self._test_sock.connect((DISCO_IP, self.PWM_AGENT_PORT))
+            self._test_sock.setblocking(False)
+            await self._pwm_send('E')  # enable servos
+            self._test_mode = True
+            self._test_motor_enabled = False
+            self.add_log("TEST MODE ENABLED — servos active, motor off")
+        except (OSError, socket.timeout) as e:
+            self.add_log(f"Test mode failed (is pwm_agent running?): {e}")
+            if self._test_sock:
+                self._test_sock.close()
+                self._test_sock = None
+
+    async def test_mode_disable(self):
+        """Disable all PWM and disconnect."""
+        if not self._test_mode:
+            return
+        await self._pwm_send('D')  # disable — sets safe values
+        self._test_mode = False
+        self._test_motor_enabled = False
+        if self._test_sock:
+            self._test_sock.close()
+            self._test_sock = None
+        self.add_log("TEST MODE DISABLED — all PWM safe")
+
+    async def test_mode_set_servos(self, left_pct: int, right_pct: int):
+        """Set servo positions. Input: -100 to +100 percent."""
+        if not self._test_mode:
+            return
+        left_pct = max(-100, min(100, left_pct))
+        right_pct = max(-100, min(100, right_pct))
+        left_ns = self.SERVO_NEUTRAL + int((left_pct / 100) * 500000)
+        right_ns = self.SERVO_NEUTRAL + int((right_pct / 100) * 500000)
+        left_ns = max(self.SERVO_MIN, min(self.SERVO_MAX, left_ns))
+        right_ns = max(self.SERVO_MIN, min(self.SERVO_MAX, right_ns))
+        await self._pwm_send(f'S {left_ns} {right_ns}')
+
+    async def test_mode_set_motor(self, throttle_pct: int):
+        """Set motor throttle. Input: 0 to 100, capped at MOTOR_MAX_TEST."""
+        if not self._test_mode or not self._test_motor_enabled:
+            return
+        throttle_pct = max(0, min(100, throttle_pct))
+        duty_ns = int((throttle_pct / 100) * self.MOTOR_MAX_TEST)
+        await self._pwm_send(f'M {duty_ns}')
+
+    async def test_mode_enable_motor(self, enable: bool):
+        """Enable/disable motor in test mode."""
+        if not self._test_mode:
+            return
+        self._test_motor_enabled = enable
+        if not enable:
+            await self._pwm_send('M 0')
+        self.add_log(f"Test motor {'ENABLED (15% max)' if enable else 'DISABLED'}")
+
     # ── Disconnect ────────────────────────────────────────────────────────────
 
     async def disconnect(self):
+        if self._test_mode:
+            await self.test_mode_disable()
         self.connected = False
         self.telemetry.connected = False
         self.telemetry.flying_state = "disconnected"
@@ -715,8 +998,12 @@ async def ws_handler(websocket, disco: DiscoConnection):
     disco.ws_clients.add(websocket)
     log.info("Control client connected")
 
-    # Send initial state
+    # Send initial state (including connection status so reconnecting browsers pick it up)
     try:
+        await websocket.send(json.dumps({
+            "type": "connectionStatus",
+            "connected": disco.connected
+        }))
         await websocket.send(json.dumps({
             "type": "telemetry",
             "data": disco.telemetry.to_dict()
@@ -766,7 +1053,13 @@ async def ws_handler(websocket, disco: DiscoConnection):
                 )
 
             elif msg_type == "connect":
-                if not disco.connected:
+                if disco.connected:
+                    # Already connected — just tell the client
+                    await websocket.send(json.dumps({
+                        "type": "connectionStatus",
+                        "connected": True
+                    }))
+                else:
                     ok = await disco.connect()
                     if ok:
                         # Start background loops
@@ -781,6 +1074,76 @@ async def ws_handler(websocket, disco: DiscoConnection):
                         "type": "connectionStatus",
                         "connected": ok
                     }))
+
+            elif msg_type == "flightplan_upload":
+                filename = msg.get("filename", "plan.mavlink")
+                content = msg.get("content", "")
+                ok = await disco.upload_flightplan(filename, content)
+                await websocket.send(json.dumps({
+                    "type": "flightplan_status",
+                    "action": "upload",
+                    "success": ok,
+                    "filename": filename,
+                }))
+
+            elif msg_type == "mavlink_start":
+                await disco.send_mavlink_start(msg.get("filename", "plan.mavlink"))
+
+            elif msg_type == "mavlink_pause":
+                await disco.send_mavlink_pause()
+
+            elif msg_type == "mavlink_stop":
+                await disco.send_mavlink_stop()
+
+            elif msg_type == "video_enable":
+                await disco.send_video_enable(msg.get("enable", True))
+
+            elif msg_type == "flat_trim":
+                await disco.send_flat_trim()
+
+            elif msg_type == "magneto_cal":
+                await disco.send_magneto_calibration(msg.get("start", True))
+
+            elif msg_type == "pitot_cal":
+                await disco.send_pitot_calibration(msg.get("start", True))
+
+            elif msg_type == "test_mode":
+                enable = msg.get("enable", False)
+                if enable:
+                    await disco.test_mode_enable()
+                else:
+                    await disco.test_mode_disable()
+                await websocket.send(json.dumps({
+                    "type": "testModeStatus",
+                    "enabled": disco._test_mode,
+                    "motorEnabled": disco._test_motor_enabled,
+                }))
+
+            elif msg_type == "test_pwm":
+                await disco.test_mode_set_servos(
+                    msg.get("left", 0),
+                    msg.get("right", 0),
+                )
+                throttle = msg.get("throttle", -1)
+                if throttle >= 0:
+                    await disco.test_mode_set_motor(throttle)
+
+            elif msg_type == "test_servo":
+                await disco.test_mode_set_servos(
+                    msg.get("left", 0),
+                    msg.get("right", 0),
+                )
+
+            elif msg_type == "test_motor":
+                await disco.test_mode_set_motor(msg.get("throttle", 0))
+
+            elif msg_type == "test_motor_enable":
+                await disco.test_mode_enable_motor(msg.get("enable", False))
+                await websocket.send(json.dumps({
+                    "type": "testModeStatus",
+                    "enabled": disco._test_mode,
+                    "motorEnabled": disco._test_motor_enabled,
+                }))
 
             elif msg_type == "disconnect":
                 await disco.disconnect()

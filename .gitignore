@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.sdp
+node_modules/
+ffmpeg.exe
+*.log

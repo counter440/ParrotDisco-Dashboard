@@ -11,8 +11,11 @@ export function useWebSocket() {
   const [logMessages, setLogMessages] = useState<string[]>(["Ready"]);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoFps, setVideoFps] = useState(0);
+  const [homePoint, setHomePoint] = useState<{ lat: number; lon: number } | null>(null);
+  const homeSetRef = useRef(false);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const connectedRef = useRef(false);
   const videoWsRef = useRef<WebSocket | null>(null);
   const frameCountRef = useRef(0);
   const prevBlobUrlRef = useRef<string | null>(null);
@@ -65,7 +68,11 @@ export function useWebSocket() {
     ws.onopen = () => {
       addLog("WebSocket connected");
       setWsReady(true);
-      ws.send(JSON.stringify({ type: "connect" }));
+      // Only connect to drone if user explicitly clicked Connect
+      if (pendingConnectRef.current) {
+        pendingConnectRef.current = false;
+        ws.send(JSON.stringify({ type: "connect" }));
+      }
     };
 
     ws.onmessage = (e) => {
@@ -73,12 +80,30 @@ export function useWebSocket() {
         const msg = JSON.parse(e.data);
         if (msg.type === "telemetry") {
           setTelemetry(msg.data);
+          // Capture home point on first GPS fix
+          if (
+            !homeSetRef.current &&
+            msg.data.gpsFixed &&
+            (msg.data.gps.lat !== 0 || msg.data.gps.lon !== 0)
+          ) {
+            homeSetRef.current = true;
+            setHomePoint({ lat: msg.data.gps.lat, lon: msg.data.gps.lon });
+          }
+          if (msg.data.connected && !connectedRef.current) {
+            connectedRef.current = true;
+            setConnected(true);
+            addLog("Connected to Disco");
+            connectVideoWS();
+          }
         } else if (msg.type === "connectionStatus") {
+          connectedRef.current = msg.connected;
           setConnected(msg.connected);
           if (msg.connected) {
             addLog("Connected to Disco");
             connectVideoWS();
           }
+        } else if (msg.type === "flightplan_status") {
+          addLog(`Flight plan ${msg.action}: ${msg.success ? "OK" : "FAILED"} — ${msg.filename}`);
         } else if (msg.type === "log" && msg.messages) {
           msg.messages.forEach((m: string) => addLog(m));
         }
@@ -89,6 +114,7 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       addLog("WebSocket disconnected");
+      connectedRef.current = false;
       setConnected(false);
       setWsReady(false);
       setTimeout(connectWS, 3000);
@@ -97,14 +123,29 @@ export function useWebSocket() {
     ws.onerror = () => {};
   }, [addLog, connectVideoWS]);
 
+  const pendingConnectRef = useRef(false);
+
   const connect = useCallback(() => {
-    connectWS();
-  }, [connectWS]);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      send({ type: "connect" });
+    } else {
+      pendingConnectRef.current = true;
+      connectWS();
+    }
+  }, [connectWS, send]);
 
   const disconnect = useCallback(() => {
     send({ type: "disconnect" });
+    connectedRef.current = false;
+    homeSetRef.current = false;
     setConnected(false);
+    setHomePoint(null);
   }, [send]);
+
+  // Auto-open WebSocket on mount (but don't connect to drone)
+  useEffect(() => {
+    connectWS();
+  }, [connectWS]);
 
   // FPS counter
   useEffect(() => {
@@ -131,6 +172,7 @@ export function useWebSocket() {
     logMessages,
     videoUrl,
     videoFps,
+    homePoint,
     send,
     connect,
     disconnect,

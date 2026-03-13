@@ -6,6 +6,9 @@ import TopBar from "./components/TopBar";
 import VideoPanel from "./components/VideoPanel";
 import ControllerBar from "./components/ControllerBar";
 import TelemetryPanel from "./components/TelemetryPanel";
+import TestModePanel from "./components/TestModePanel";
+import CalibrationPanel from "./components/CalibrationPanel";
+import FlightPlannerModal from "./components/FlightPlannerModal";
 import ConfigModal from "./components/ConfigModal";
 import LogBar from "./components/LogBar";
 
@@ -16,6 +19,7 @@ export default function App() {
     logMessages,
     videoUrl,
     videoFps,
+    homePoint,
     send,
     connect,
     disconnect,
@@ -24,6 +28,9 @@ export default function App() {
 
   const [config, setConfig] = useState<GamepadConfig>(DEFAULT_CONFIG);
   const [configOpen, setConfigOpen] = useState(false);
+  const [hudEnabled, setHudEnabled] = useState(false);
+  const [flightPlannerOpen, setFlightPlannerOpen] = useState(false);
+  const [videoEnabled, setVideoEnabled] = useState(true);
 
   const gpState = useGamepad(config, send);
 
@@ -69,13 +76,22 @@ export default function App() {
         onConnect={connect}
         onDisconnect={disconnect}
         onOpenConfig={() => setConfigOpen(true)}
+        onOpenFlightPlanner={() => setFlightPlannerOpen(true)}
       />
 
       <div className="grid grid-cols-[1fr_340px] overflow-hidden p-3 gap-3">
         {/* Left: Video + Controller */}
         <div className="flex flex-col gap-3 overflow-hidden">
-          <VideoPanel videoUrl={videoUrl} fps={videoFps} telemetry={telemetry} />
-          <ControllerBar gpState={gpState} config={config} />
+          <VideoPanel videoUrl={videoUrl} fps={videoFps} telemetry={telemetry} hudEnabled={hudEnabled} onToggleHud={() => setHudEnabled((v) => !v)} homePoint={homePoint} videoEnabled={videoEnabled} onToggleVideo={() => {
+            const next = !videoEnabled;
+            setVideoEnabled(next);
+            send({ type: "video_enable", enable: next });
+          }} />
+          <div className="flex gap-3">
+            <ControllerBar gpState={gpState} config={config} />
+            <TestModePanel send={send} gpState={gpState} />
+            <CalibrationPanel send={send} />
+          </div>
         </div>
 
         {/* Right: Telemetry */}
@@ -89,6 +105,18 @@ export default function App() {
         config={config}
         onSave={handleSaveConfig}
         onClose={() => setConfigOpen(false)}
+      />
+
+      <FlightPlannerModal
+        open={flightPlannerOpen}
+        onClose={() => setFlightPlannerOpen(false)}
+        send={send}
+        flyingState={telemetry.flyingState}
+        dronePosition={
+          telemetry.gpsFixed && (telemetry.gps.lat !== 0 || telemetry.gps.lon !== 0)
+            ? { lat: telemetry.gps.lat, lon: telemetry.gps.lon }
+            : homePoint
+        }
       />
     </div>
   );

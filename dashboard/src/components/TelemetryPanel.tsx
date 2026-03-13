@@ -13,7 +13,9 @@ import {
   OctagonX,
   Thermometer,
   Camera,
+  Signal,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import type { TelemetryData } from "../lib/types";
 import AttitudeIndicator from "./AttitudeIndicator";
 
@@ -77,6 +79,14 @@ function BatteryIcon({ pct }: { pct: number }) {
   return <BatteryLow size={12} />;
 }
 
+function rssiColor(rssi: string): string {
+  const val = parseInt(rssi);
+  if (isNaN(val)) return "text-white/90";
+  if (val > -65) return "text-emerald-400";
+  if (val > -80) return "text-amber-400";
+  return "text-rose-500";
+}
+
 function satsColor(sats: number): string {
   if (sats >= 6) return "text-emerald-400";
   if (sats >= 3) return "text-amber-400";
@@ -84,27 +94,84 @@ function satsColor(sats: number): string {
 }
 
 export default function TelemetryPanel({ telemetry: t, send }: TelemetryPanelProps) {
+  const [takeoffHeld, setTakeoffHeld] = useState(false);
+  const takeoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isLanded = t.flyingState === "landed" || t.flyingState === "disconnected";
+  const isAirborne = t.flyingState === "flying" || t.flyingState === "hovering";
+  const isArmed = !isLanded && t.flyingState !== "disconnected";
+  const hasGpsFix = t.gpsSats >= 4 || (t.gps.lat !== 0 || t.gps.lon !== 0);
+  const canTakeoff = isLanded && t.flyingState !== "disconnected" && hasGpsFix;
+
+  const handleTakeoffDown = () => {
+    if (!canTakeoff) return;
+    setTakeoffHeld(true);
+    takeoffTimerRef.current = setTimeout(() => {
+      send({ type: "takeoff" });
+      setTakeoffHeld(false);
+    }, 1500);
+  };
+
+  const handleTakeoffUp = () => {
+    if (takeoffTimerRef.current) {
+      clearTimeout(takeoffTimerRef.current);
+      takeoffTimerRef.current = null;
+    }
+    setTakeoffHeld(false);
+  };
+
   return (
     <div className="p-3 flex flex-col gap-2 overflow-y-auto">
       {/* Flight State */}
       <Section title="Flight State" icon={<Compass size={12} />}>
-        <Row label="State" value={t.flyingState.toUpperCase()} />
+        <div className="flex justify-between items-center py-0.5 text-[13px]">
+          <span className="text-white/40">State</span>
+          <span className="font-semibold tabular-nums text-white/90">{t.flyingState.toUpperCase()}</span>
+        </div>
+        <div className="flex justify-between items-center py-0.5 text-[13px] mb-1">
+          <span className="text-white/40">Armed</span>
+          <span className={`font-semibold text-[11px] px-2 py-0.5 rounded-full ${isArmed ? "bg-rose-500/20 text-rose-400" : "bg-white/[0.06] text-white/30"}`}>
+            {isArmed ? "ARMED" : "DISARMED"}
+          </span>
+        </div>
         <div className="flex gap-2 mt-2 flex-wrap">
           <button
-            onClick={() => send({ type: "takeoff" })}
-            className="flex-1 min-w-[60px] py-1.5 px-2 text-xs bg-emerald-500/10 text-emerald-400 rounded-xl hover:bg-emerald-500/20 transition-all duration-300 flex items-center justify-center gap-1 cursor-pointer"
+            onMouseDown={handleTakeoffDown}
+            onMouseUp={handleTakeoffUp}
+            onMouseLeave={handleTakeoffUp}
+            onTouchStart={handleTakeoffDown}
+            onTouchEnd={handleTakeoffUp}
+            disabled={!canTakeoff}
+            className={`flex-1 min-w-[60px] py-1.5 px-2 text-xs rounded-xl transition-all duration-300 flex items-center justify-center gap-1 relative overflow-hidden ${
+              !canTakeoff
+                ? "bg-white/[0.03] text-white/20 cursor-not-allowed"
+                : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
+            }`}
           >
-            <PlaneTakeoff size={14} /> TAKEOFF
+            {takeoffHeld && (
+              <div className="absolute inset-0 bg-emerald-500/30 animate-[fillRight_1.5s_linear]" style={{ animation: "fillRight 1.5s linear forwards" }} />
+            )}
+            <span className="relative z-10 flex items-center gap-1"><PlaneTakeoff size={14} /> {takeoffHeld ? "HOLD..." : !hasGpsFix ? "NO GPS FIX" : "TAKEOFF"}</span>
           </button>
           <button
             onClick={() => send({ type: "land" })}
-            className="flex-1 min-w-[60px] py-1.5 px-2 text-xs bg-blue-500/10 text-blue-400 rounded-xl hover:bg-blue-500/20 transition-all duration-300 flex items-center justify-center gap-1 cursor-pointer"
+            disabled={!isAirborne}
+            className={`flex-1 min-w-[60px] py-1.5 px-2 text-xs rounded-xl transition-all duration-300 flex items-center justify-center gap-1 ${
+              !isAirborne
+                ? "bg-white/[0.03] text-white/20 cursor-not-allowed"
+                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 cursor-pointer"
+            }`}
           >
             <PlaneLanding size={14} /> LAND
           </button>
           <button
             onClick={() => send({ type: "rth", start: true })}
-            className="flex-1 min-w-[60px] py-1.5 px-2 text-xs bg-amber-500/10 text-amber-400 rounded-xl hover:bg-amber-500/20 transition-all duration-300 flex items-center justify-center gap-1 cursor-pointer"
+            disabled={!isAirborne}
+            className={`flex-1 min-w-[60px] py-1.5 px-2 text-xs rounded-xl transition-all duration-300 flex items-center justify-center gap-1 ${
+              !isAirborne
+                ? "bg-white/[0.03] text-white/20 cursor-not-allowed"
+                : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 cursor-pointer"
+            }`}
           >
             <Home size={14} /> RTH
           </button>
@@ -154,7 +221,6 @@ export default function TelemetryPanel({ telemetry: t, send }: TelemetryPanelPro
           </span>
           <span className={`font-semibold tabular-nums ${satsColor(t.gpsSats)}`}>
             {t.gpsSats}
-            {t.gpsFixed ? " (fix)" : ""}
           </span>
         </div>
       </Section>
@@ -202,6 +268,18 @@ export default function TelemetryPanel({ telemetry: t, send }: TelemetryPanelPro
         </div>
       </Section>
 
+      {/* 4G Signal */}
+      <Section title="4G Signal" icon={<Signal size={12} />}>
+        <Row
+          label="RSSI"
+          value={t.rssi || "--"}
+          color={rssiColor(t.rssi)}
+        />
+        <Row label="RSRP" value={t.rsrp || "--"} />
+        <Row label="RSRQ" value={t.rsrq || "--"} />
+        <Row label="SINR" value={t.sinr || "--"} />
+      </Section>
+
       {/* System */}
       <Section title="System" icon={<Thermometer size={12} />}>
         <Row
@@ -215,6 +293,7 @@ export default function TelemetryPanel({ telemetry: t, send }: TelemetryPanelPro
           <span className="font-semibold tabular-nums text-white/90">{t.cameraTilt}&deg;</span>
         </div>
       </Section>
+
     </div>
   );
 }
