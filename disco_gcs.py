@@ -1162,15 +1162,29 @@ async def ws_handler(websocket, disco: DiscoConnection):
 # ── HTTP Server ───────────────────────────────────────────────────────────────
 
 class SimpleHTTPHandler:
-    """Minimal HTTP server to serve the dashboard HTML."""
+    """Minimal HTTP server to serve the React dashboard build."""
+
+    MIME_TYPES = {
+        ".html": "text/html",
+        ".css": "text/css",
+        ".js": "application/javascript",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+    }
 
     def __init__(self):
-        self.html_path = Path(__file__).parent / "disco_cockpit.html"
+        # Serve from React build output if available, fallback to standalone HTML
+        self.dist_dir = Path(__file__).parent / "dashboard" / "dist"
+        self.fallback_html = Path(__file__).parent / "disco_cockpit.html"
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=5.0)
-            # Read headers (discard)
             while True:
                 line = await reader.readline()
                 if line in (b'\r\n', b'\n', b''):
@@ -1178,15 +1192,25 @@ class SimpleHTTPHandler:
 
             request_str = request_line.decode()
             parts = request_str.split()
-            method = parts[0] if parts else "GET"
             path = parts[1] if len(parts) > 1 else "/"
 
-            if path == "/" or path == "/index.html":
-                await self.serve_file(writer, self.html_path, "text/html")
-            elif path == "/disco_cockpit.html":
-                await self.serve_file(writer, self.html_path, "text/html")
+            # Serve React build
+            if self.dist_dir.exists():
+                if path == "/":
+                    path = "/index.html"
+                # Sanitize path
+                safe_path = path.lstrip("/").replace("..", "")
+                file_path = self.dist_dir / safe_path
+                if file_path.exists() and file_path.is_file():
+                    ext = file_path.suffix
+                    content_type = self.MIME_TYPES.get(ext, "application/octet-stream")
+                    await self.serve_file(writer, file_path, content_type)
+                else:
+                    # SPA fallback — serve index.html for any unknown route
+                    await self.serve_file(writer, self.dist_dir / "index.html", "text/html")
             else:
-                await self.send_response(writer, 404, "text/plain", b"Not Found")
+                # Fallback to standalone HTML
+                await self.serve_file(writer, self.fallback_html, "text/html")
 
         except Exception as e:
             log.warning(f"HTTP error: {e}")

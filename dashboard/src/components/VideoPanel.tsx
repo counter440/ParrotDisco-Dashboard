@@ -1,5 +1,4 @@
-import { useState, useRef, useCallback } from "react";
-import { Video, VideoOff, Crosshair, RotateCcw } from "lucide-react";
+import { Video, VideoOff, Crosshair } from "lucide-react";
 import type { TelemetryData } from "../lib/types";
 import VideoHUD from "./VideoHUD";
 import FlightPathHUD from "./FlightPathHUD";
@@ -14,21 +13,9 @@ interface VideoPanelProps {
   homePoint: { lat: number; lon: number } | null;
   videoEnabled: boolean;
   onToggleVideo: () => void;
-  send: (msg: Record<string, unknown>) => void;
 }
 
-export default function VideoPanel({ videoUrl, fps, telemetry, hudEnabled, onToggleHud, homePoint, videoEnabled, onToggleVideo, send }: VideoPanelProps) {
-  const [cameraTilt, setCameraTilt] = useState(0);
-  const [cameraPan, setCameraPan] = useState(0);
-  const [ptzVisible, setPtzVisible] = useState(false);
-
-  const sendCamera = useCallback((tilt: number, pan: number) => {
-    setCameraTilt(tilt);
-    setCameraPan(pan);
-    send({ type: "camera", tilt, pan });
-  }, [send]);
-
-  const resetCamera = () => sendCamera(0, 0);
+export default function VideoPanel({ videoUrl, fps, telemetry, hudEnabled, onToggleHud, homePoint, videoEnabled, onToggleVideo }: VideoPanelProps) {
   return (
     <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-black/40">
       <div className="flex-1 flex items-center justify-center relative overflow-hidden">
