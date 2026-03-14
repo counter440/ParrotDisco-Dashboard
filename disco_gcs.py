@@ -668,10 +668,10 @@ class DiscoConnection:
             if self.ws_clients:
                 msg = json.dumps({"type": "telemetry", "data": self.telemetry.to_dict()})
                 dead = set()
-                for ws in self.ws_clients:
+                for ws in list(self.ws_clients):
                     try:
                         await ws.send(msg)
-                    except websockets.exceptions.ConnectionClosed:
+                    except (websockets.exceptions.ConnectionClosed, Exception):
                         dead.add(ws)
                 self.ws_clients -= dead
             await asyncio.sleep(0.1)
@@ -808,13 +808,13 @@ class DiscoConnection:
                 frame = bytes(buf[start:end+2])
                 del buf[:end+2]
 
-                # Broadcast frame
+                # Broadcast frame (iterate copy to avoid set-changed-size crash)
                 if self.video_clients:
                     dead = set()
-                    for ws in self.video_clients:
+                    for ws in list(self.video_clients):
                         try:
                             await ws.send(frame)
-                        except websockets.exceptions.ConnectionClosed:
+                        except (websockets.exceptions.ConnectionClosed, Exception):
                             dead.add(ws)
                     self.video_clients -= dead
 
