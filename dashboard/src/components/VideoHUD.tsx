@@ -1,7 +1,11 @@
 import type { TelemetryData } from "../lib/types";
+import type { LiveStats } from "../hooks/useLiveStats";
+import type { WeatherData } from "../hooks/useWeather";
 
 interface VideoHUDProps {
   telemetry: TelemetryData;
+  liveStats: LiveStats;
+  weather: WeatherData | null;
 }
 
 function batteryColor(pct: number): string {
@@ -132,7 +136,19 @@ function SatelliteIcon() {
 
 const textShadow = { textShadow: "0 1px 4px rgba(0,0,0,0.8)" };
 
-export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
+function WindArrow({ direction }: { direction: number }) {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" style={{ transform: `rotate(${direction}deg)` }}>
+      <path d="M12 2 L16 18 L12 14 L8 18 Z" fill="rgba(255,255,255,0.8)" />
+    </svg>
+  );
+}
+
+function formatDistance(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+}
+
+export default function VideoHUD({ telemetry: t, liveStats, weather }: VideoHUDProps) {
   return (
     <div className="absolute inset-0 pointer-events-none p-3 flex flex-col justify-between text-[12px] font-medium">
       {/* Top row */}
@@ -176,7 +192,7 @@ export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
 
       {/* Bottom row */}
       <div className="flex justify-between items-end">
-        {/* Bottom-left: Speeds */}
+        {/* Bottom-left: Speeds + Flight stats */}
         <div className="flex flex-col gap-1.5">
           <div
             className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/90 tabular-nums text-[20px] font-semibold"
@@ -190,10 +206,25 @@ export default function VideoHUD({ telemetry: t }: VideoHUDProps) {
           >
             GS {t.groundspeed} m/s
           </div>
+          <div className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/70 tabular-nums text-[13px] font-medium flex flex-col gap-0.5" style={textShadow}>
+            <span>FLT {liveStats.flightTime}</span>
+            <span>DIST {formatDistance(liveStats.distanceFromHome)}</span>
+            <span>MAX ALT {liveStats.maxAltitude} m</span>
+            <span>MAX SPD {liveStats.maxSpeed} m/s</span>
+          </div>
         </div>
 
-        {/* Bottom-right: empty */}
-        <div />
+        {/* Bottom-right: Weather */}
+        {weather && (
+          <div className="bg-black/40 backdrop-blur rounded-lg px-4 py-2 text-white/70 tabular-nums text-[13px] font-medium flex flex-col gap-0.5 items-end" style={textShadow}>
+            <div className="flex items-center gap-1.5">
+              <WindArrow direction={weather.windDirection} />
+              <span>{weather.windSpeed} m/s</span>
+            </div>
+            <span>GUST {weather.windGusts} m/s</span>
+            <span>{weather.temperature}°C</span>
+          </div>
+        )}
       </div>
     </div>
   );

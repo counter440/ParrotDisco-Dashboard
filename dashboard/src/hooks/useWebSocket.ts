@@ -165,6 +165,22 @@ export function useWebSocket() {
     };
   }, []);
 
+  const disableVideo = useCallback(() => {
+    setVideoUrl(null);
+    if (prevBlobUrlRef.current) {
+      URL.revokeObjectURL(prevBlobUrlRef.current);
+      prevBlobUrlRef.current = null;
+    }
+    if (videoWsRef.current) {
+      videoWsRef.current.close();
+      videoWsRef.current = null;
+    }
+  }, []);
+
+  const enableVideo = useCallback(() => {
+    connectVideoWS();
+  }, [connectVideoWS]);
+
   return {
     telemetry,
     connected,
@@ -176,6 +192,8 @@ export function useWebSocket() {
     send,
     connect,
     disconnect,
+    disableVideo,
+    enableVideo,
     addLog,
   };
 }

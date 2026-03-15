@@ -100,3 +100,28 @@ export interface Waypoint {
 }
 
 export const DEFAULT_ALTITUDE = 50;
+
+// --- Alert types ---
+export type AlertSeverity = "warning" | "critical";
+
+export interface Alert {
+  id: string;
+  message: string;
+  severity: AlertSeverity;
+}
+
+export interface AlertConfig {
+  batteryWarn: number;
+  batteryCritical: number;
+  rssiMin: number; // dBm
+  altitudeMax: number; // metres
+  gpsSatsMin: number;
+}
+
+export const DEFAULT_ALERT_CONFIG: AlertConfig = {
+  batteryWarn: 30,
+  batteryCritical: 15,
+  rssiMin: -90,
+  altitudeMax: 150,
+  gpsSatsMin: 4,
+};

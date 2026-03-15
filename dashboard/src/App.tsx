@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useGamepad } from "./hooks/useGamepad";
+import { useLiveStats } from "./hooks/useLiveStats";
+import { useAlerts } from "./hooks/useAlerts";
+import { useWeather } from "./hooks/useWeather";
+import { useFlightRecorder } from "./hooks/useFlightRecorder";
 import { DEFAULT_CONFIG, type GamepadConfig } from "./lib/types";
 import TopBar from "./components/TopBar";
 import VideoPanel from "./components/VideoPanel";
@@ -23,16 +27,21 @@ export default function App() {
     send,
     connect,
     disconnect,
+    disableVideo,
+    enableVideo,
     addLog,
   } = useWebSocket();
 
   const [config, setConfig] = useState<GamepadConfig>(DEFAULT_CONFIG);
   const [configOpen, setConfigOpen] = useState(false);
-  const [hudEnabled, setHudEnabled] = useState(false);
   const [flightPlannerOpen, setFlightPlannerOpen] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
   const gpState = useGamepad(config, send);
+  const liveStats = useLiveStats(telemetry, homePoint, connected);
+  const alerts = useAlerts(telemetry);
+  const weather = useWeather(telemetry.gps.lat, telemetry.gps.lon, telemetry.gpsFixed);
+  const recorder = useFlightRecorder(telemetry);
 
   const handleSaveConfig = useCallback(
     (newConfig: GamepadConfig) => {
@@ -77,15 +86,28 @@ export default function App() {
         onDisconnect={disconnect}
         onOpenConfig={() => setConfigOpen(true)}
         onOpenFlightPlanner={() => setFlightPlannerOpen(true)}
+        isRecording={recorder.isRecording}
+        recordingSampleCount={recorder.sampleCount}
+        recordingElapsed={recorder.elapsed}
+        hasRecordingData={recorder.hasData}
+        onToggleRecording={recorder.toggle}
+        onExportJSON={recorder.exportJSON}
+        onExportCSV={recorder.exportCSV}
+        onClearRecording={recorder.clear}
       />
 
       <div className="grid grid-cols-[1fr_340px] overflow-hidden p-3 gap-3">
         {/* Left: Video + Controller */}
         <div className="flex flex-col gap-3 overflow-hidden">
-          <VideoPanel videoUrl={videoUrl} fps={videoFps} telemetry={telemetry} hudEnabled={hudEnabled} onToggleHud={() => setHudEnabled((v) => !v)} homePoint={homePoint} videoEnabled={videoEnabled} onToggleVideo={() => {
+          <VideoPanel videoUrl={videoUrl} fps={videoFps} telemetry={telemetry} liveStats={liveStats} alerts={alerts} weather={weather} homePoint={homePoint} videoEnabled={videoEnabled} onToggleVideo={() => {
             const next = !videoEnabled;
             setVideoEnabled(next);
             send({ type: "video_enable", enable: next });
+            if (!next) {
+              disableVideo();
+            } else {
+              enableVideo();
+            }
           }} />
           <div className="flex gap-3">
             <ControllerBar gpState={gpState} config={config} />
