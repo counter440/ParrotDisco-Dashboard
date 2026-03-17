@@ -332,6 +332,7 @@ class DiscoConnection:
         self.ffmpeg_proc = None
         self.log_messages = []
         self._bg_tasks = []
+        self._last_pcmd_time = 0.0  # timestamp of last PCMD from any client
 
     def add_log(self, msg: str):
         self.log_messages.append(msg)
@@ -466,6 +467,11 @@ class DiscoConnection:
     async def send_video_enable(self, enable: bool):
         self.send_cmd(self.protocol.pack_video_enable(1 if enable else 0))
         self.add_log(f"Video {'enabled' if enable else 'disabled'}")
+        # If re-enabling and ffmpeg has died, restart the video pipeline
+        if enable and self.ffmpeg_proc and self.ffmpeg_proc.returncode is not None:
+            self.add_log("ffmpeg was dead — restarting video proxy")
+            await self.stop_video()
+            asyncio.create_task(self.start_video_proxy())
 
     async def send_takeoff(self):
         self.send_cmd(self.protocol.pack_takeoff())
@@ -493,11 +499,31 @@ class DiscoConnection:
         self.pcmd_pitch = pitch
         self.pcmd_yaw = yaw
         self.pcmd_gaz = gaz
+        self._last_pcmd_time = time.monotonic()
+
+    def _zero_pcmd(self):
+        """Zero out all PCMD values (neutral stick)."""
+        self.pcmd_flag = 0
+        self.pcmd_roll = 0
+        self.pcmd_pitch = 0
+        self.pcmd_yaw = 0
+        self.pcmd_gaz = 0
 
     async def pcmd_loop(self):
-        """Send PCMD at 25Hz."""
+        """Send PCMD at 25Hz with watchdog — zero out if no client input for 2s."""
         interval = 1.0 / PCMD_HZ
+        watchdog_warned = False
         while self.connected:
+            # Watchdog: if no PCMD update from any client for 2 seconds, go neutral
+            if self._last_pcmd_time > 0:
+                stale = time.monotonic() - self._last_pcmd_time
+                if stale > 2.0 and self.pcmd_flag != 0:
+                    self._zero_pcmd()
+                    if not watchdog_warned:
+                        self.add_log("PCMD WATCHDOG: no client input for 2s — sending neutral")
+                        watchdog_warned = True
+                else:
+                    watchdog_warned = False
             frame = self.protocol.pack_pcmd(
                 self.pcmd_flag, self.pcmd_roll, self.pcmd_pitch,
                 self.pcmd_yaw, self.pcmd_gaz
@@ -1156,6 +1182,10 @@ async def ws_handler(websocket, disco: DiscoConnection):
         pass
     finally:
         disco.ws_clients.discard(websocket)
+        # If no control clients remain, zero PCMD immediately for safety
+        if not disco.ws_clients:
+            disco._zero_pcmd()
+            disco.add_log("All control clients disconnected — PCMD zeroed")
         log.info("Control client disconnected")
 
 

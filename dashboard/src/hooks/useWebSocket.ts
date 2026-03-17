@@ -17,6 +17,7 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const connectedRef = useRef(false);
   const videoWsRef = useRef<WebSocket | null>(null);
+  const videoDisabledRef = useRef(false);
   const frameCountRef = useRef(0);
   const prevBlobUrlRef = useRef<string | null>(null);
 
@@ -54,7 +55,9 @@ export function useWebSocket() {
 
     vws.onclose = () => {
       setTimeout(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) connectVideoWS();
+        if (!videoDisabledRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+          connectVideoWS();
+        }
       }, 2000);
     };
   }, []);
@@ -166,6 +169,7 @@ export function useWebSocket() {
   }, []);
 
   const disableVideo = useCallback(() => {
+    videoDisabledRef.current = true;
     setVideoUrl(null);
     if (prevBlobUrlRef.current) {
       URL.revokeObjectURL(prevBlobUrlRef.current);
@@ -178,6 +182,12 @@ export function useWebSocket() {
   }, []);
 
   const enableVideo = useCallback(() => {
+    videoDisabledRef.current = false;
+    // Close any stale ghost connection before opening fresh one
+    if (videoWsRef.current) {
+      videoWsRef.current.close();
+      videoWsRef.current = null;
+    }
     connectVideoWS();
   }, [connectVideoWS]);
 

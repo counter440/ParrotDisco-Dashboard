@@ -51,28 +51,54 @@ export default function App() {
     [addLog]
   );
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts with hold-to-confirm for critical actions
   useEffect(() => {
+    const holdTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+    const HOLD_MS = 800; // Hold 800ms to confirm takeoff/land/RTH
+
     function onKeydown(e: KeyboardEvent) {
+      if (e.repeat) return;
       if (e.key === "t" && e.ctrlKey) {
         e.preventDefault();
-        send({ type: "takeoff" });
+        holdTimers["takeoff"] = setTimeout(() => {
+          send({ type: "takeoff" });
+          addLog("Keyboard: TAKEOFF confirmed (held Ctrl+T)");
+        }, HOLD_MS);
       }
       if (e.key === "l" && e.ctrlKey) {
         e.preventDefault();
-        send({ type: "land" });
+        holdTimers["land"] = setTimeout(() => {
+          send({ type: "land" });
+          addLog("Keyboard: LAND confirmed (held Ctrl+L)");
+        }, HOLD_MS);
       }
       if (e.key === "h" && e.ctrlKey) {
         e.preventDefault();
-        send({ type: "rth", start: true });
+        holdTimers["rth"] = setTimeout(() => {
+          send({ type: "rth", start: true });
+          addLog("Keyboard: RTH confirmed (held Ctrl+H)");
+        }, HOLD_MS);
       }
       if (e.key === "Escape") {
+        // Emergency is instant — no hold required
         send({ type: "emergency" });
       }
     }
+
+    function onKeyup(e: KeyboardEvent) {
+      if (e.key === "t") { clearTimeout(holdTimers["takeoff"]); delete holdTimers["takeoff"]; }
+      if (e.key === "l") { clearTimeout(holdTimers["land"]); delete holdTimers["land"]; }
+      if (e.key === "h") { clearTimeout(holdTimers["rth"]); delete holdTimers["rth"]; }
+    }
+
     document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [send]);
+    document.addEventListener("keyup", onKeyup);
+    return () => {
+      document.removeEventListener("keydown", onKeydown);
+      document.removeEventListener("keyup", onKeyup);
+      Object.values(holdTimers).forEach(clearTimeout);
+    };
+  }, [send, addLog]);
 
   return (
     <div className="relative grid grid-rows-[56px_1fr_40px] h-screen bg-[#030712]">
